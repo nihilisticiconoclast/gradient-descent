@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gradient descent — Notes</title>
+<meta name="description" content="Gradient descent fitting a straight line, with the loss landscape and every equation evaluated live at each epoch.">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/nihilisticiconoclast/cuddly-lamp@main/assets/tokens.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<style>
+  /* page layout only — colour, type and edges come from tokens.css */
+  .masthead{display:flex;align-items:center;justify-content:space-between;gap:1rem;border-bottom:var(--rule);padding-bottom:16px;margin-bottom:clamp(28px,5vw,56px)}
+  .brand{display:flex;align-items:center;gap:.7rem}
+  .brand .wordmark{font-family:var(--font-data);font-size:.78rem;letter-spacing:.16em;text-transform:uppercase;color:var(--contour);line-height:1.3}
+
+  .controls{display:flex;flex-wrap:wrap;align-items:center;gap:.8rem 1rem;margin:0 0 1.4rem}
+  .controls .btn{padding:.55rem 1rem;font-size:.92rem}
+  .controls label{font-family:var(--font-data);font-size:.8rem;color:var(--contour);letter-spacing:.06em}
+  .controls input[type=range]{flex:1;min-width:160px;accent-color:var(--index)}
+
+  .readout{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-top:var(--rule);border-bottom:var(--rule);margin:0 0 1.6rem}
+  .readout div{padding:.7rem .9rem .7rem 0}
+  .readout dt{font-family:var(--font-data);font-size:.74rem;letter-spacing:.08em;color:var(--contour);text-transform:uppercase}
+  .readout dd{margin:0;font-family:var(--font-display);font-size:var(--step-2);font-weight:560;font-variant-numeric:tabular-nums;color:var(--ink)}
+  @media (max-width:560px){.readout{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+  .panes{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:clamp(20px,3vw,40px);margin-bottom:2rem}
+  .pane h3{font-size:var(--step-1);margin-bottom:.2em}
+  .pane .caption{margin:0 0 .6rem}
+  .plot{position:relative;height:300px;border:1px solid color-mix(in srgb,var(--contour) 38%,transparent)}
+  .plot canvas{position:absolute;inset:0;width:100%;height:100%}
+
+  .eqs{border-top:var(--rule)}
+  .eq{display:grid;grid-template-columns:11rem minmax(0,1fr);gap:1rem;padding:.9rem 0;border-bottom:var(--rule);align-items:center}
+  .eq .lab{font-family:var(--font-data);font-size:.8rem;color:var(--contour);line-height:1.4}
+  .eq .lab b{display:block;font-family:var(--font-body);font-weight:600;font-size:.95rem;color:var(--ink)}
+  .eq .math{overflow-x:auto;overflow-y:hidden}
+  .eq .katex-display{margin:.2rem 0;text-align:left}
+  .eq .katex-display>.katex{text-align:left}
+  @media (max-width:700px){.eq{grid-template-columns:1fr;gap:.3rem}}
+
+  table.res{border-collapse:collapse;font-family:var(--font-data);font-size:.85rem;font-variant-numeric:tabular-nums}
+  table.res th,table.res td{text-align:right;padding:.3rem 1.2rem .3rem 0;border-top:var(--rule)}
+  table.res th{color:var(--contour);font-weight:500}
+
+  .katex{color:var(--ink);font-size:1.08em}
+  .prose h2{margin-top:.4em}
+  .prose .katex-display{overflow-x:auto;overflow-y:hidden;padding:.2rem 0}
+  .note{color:var(--contour);font-family:var(--font-data);font-size:.82rem;margin-top:2.5rem}
+</style>
+</head>
+<body data-seed="gradient-descent">
+<main class="wrap">
+
+  <div class="masthead">
+    <div class="brand">
+      <span class="sig" id="sig"></span>
+      <span class="wordmark">Notes<br>Machine learning</span>
+    </div>
+  </div>
+
+  <p class="eyebrow">Optimisation · gradient descent</p>
+  <h1>Finding the bottom of the valley by feeling for the slope</h1>
+  <p class="lede">A straight line is fitted to five points by gradient descent. Each
+  epoch, the line is scored, the score is differentiated, and the line takes one small
+  step downhill. On the left is the line; on the right is the valley it is walking
+  down; underneath, every equation with this epoch's numbers in it.</p>
+
+  <div class="doodle" id="doodle"></div>
+
+  <hr>
+
+  <div class="controls">
+    <button class="btn" id="play" type="button">Play</button>
+    <button class="btn" id="step" type="button">+1 epoch</button>
+    <button class="btn" id="reset" type="button">Reset</button>
+    <label for="ep">EPOCH</label>
+    <input type="range" id="ep" min="0" max="500" step="1" value="0">
+  </div>
+
+  <dl class="readout">
+    <div><dt>Epoch</dt><dd id="r-ep">0</dd></div>
+    <div><dt>m · slope</dt><dd id="r-m">0.000</dd></div>
+    <div><dt>c · intercept</dt><dd id="r-c">1.250</dd></div>
+    <div><dt>L · loss</dt><dd id="r-l">0.000</dd></div>
+  </dl>
+
+  <div class="panes">
+    <section class="pane">
+      <h3>The line</h3>
+      <p class="caption">data space · x against y · dashes are the misses</p>
+      <div class="plot"><canvas id="cv-line" role="img" aria-label="Five data points with the current fitted line; dashed verticals show each residual"></canvas></div>
+    </section>
+    <section class="pane">
+      <h3>The valley</h3>
+      <p class="caption">parameter space · m against c · contours of L</p>
+      <div class="plot"><canvas id="cv-valley" role="img" aria-label="Contour map of the loss over slope m and intercept c, with the route gradient descent has taken and an arrow pointing downhill"></canvas></div>
+    </section>
+  </div>
+
+  <div class="eqs">
+    <div class="eq"><div class="lab"><b>1 · Predict</b>the current line</div><div class="math" id="e1"></div></div>
+    <div class="eq"><div class="lab"><b>2 · Miss</b>one residual per point</div>
+      <div class="math"><table class="res"><thead><tr><th>i</th><th>x</th><th>y</th><th>ŷ</th><th>y − ŷ</th><th>(y − ŷ)²</th></tr></thead><tbody id="tb"></tbody></table></div></div>
+    <div class="eq"><div class="lab"><b>3 · Score</b>average squared miss</div><div class="math" id="e3"></div></div>
+    <div class="eq"><div class="lab"><b>4 · Slope</b>gradient in m</div><div class="math" id="e4"></div></div>
+    <div class="eq"><div class="lab"><b>&nbsp;&nbsp;&nbsp;&nbsp;· Slope</b>gradient in c</div><div class="math" id="e5"></div></div>
+    <div class="eq"><div class="lab"><b>5 · Step</b>update m, η = 0.01</div><div class="math" id="e6"></div></div>
+    <div class="eq"><div class="lab"><b>&nbsp;&nbsp;&nbsp;&nbsp;· Step</b>update c, η = 0.01</div><div class="math" id="e7"></div></div>
+  </div>
+
+  <hr>
+
+  <div class="prose">
+    <h2>What the loss is for</h2>
+    <p>The goal is a rule that predicts y from x. A rule here is just a line, and a
+    line is just two numbers: a slope <code>m</code> and an intercept <code>c</code>.
+    To judge a candidate line, run it over points where the true answer is already
+    known and measure how far each prediction lands from it. Square each miss, so
+    that misses above and below the line cannot cancel and large misses count for
+    more, and average them. That average is the loss. Zero means every prediction
+    was exact; the larger it is, the further off the rule was.</p>
+    <p>Because every pair <code>(m, c)</code> has its own loss, the loss is a surface
+    over the plane of possible lines. That surface is the right-hand map: the
+    horizontal axis is <code>m</code>, the vertical axis is <code>c</code>, and the
+    contours are lines of equal loss, exactly as contours on a map are lines of equal
+    height. Amber marks the high ground, where the line is badly wrong. The lowest
+    point of the valley is the best line. The data never moves; only the position
+    on this map does.</p>
+
+    <h2>Where the gradients come from</h2>
+    <p>With the data held fixed, the loss is an ordinary function of two variables:</p>
+    <div id="d1"></div>
+    <p>Differentiate with respect to <code>m</code>, treating <code>c</code> as a
+    constant. By the chain rule the bracket contributes its own derivative,
+    <code>−xᵢ</code>:</p>
+    <div id="d2"></div>
+    <p>With respect to <code>c</code>, the bracket's derivative is just <code>−1</code>:</p>
+    <div id="d3"></div>
+    <p>Read plainly: the <code>c</code> gradient is minus twice the average miss. If the
+    line sits mostly above the points, the misses are negative, the gradient is
+    positive, and the step pushes <code>c</code> down. The <code>m</code> gradient is the
+    same thing with each miss weighted by its <code>x</code>, because tilting the line
+    moves the far-right predictions most.</p>
+    <p>The minimum is where both partial derivatives are zero, the same condition as
+    finding the lowest point of a curve by setting its derivative to zero. For a
+    straight line that system can be solved exactly (it is ordinary least squares;
+    the cross on the map marks its answer). Gradient descent never solves it. It
+    stands somewhere, measures the slope, and steps against it:</p>
+    <div id="d4"></div>
+    <p>That is why the gradients in row 4 shrink as the route reaches the valley
+    floor: the slope underfoot flattens, so each step gets shorter. The method earns
+    its keep on models with millions of parameters, where no exact solution exists
+    but the slope can still be computed.</p>
+
+    <h2>Reading the numbers</h2>
+    <p><strong>Epoch</strong> counts updates. With five points and every point used in
+    each update, one epoch is one step. <strong>m</strong> and <strong>c</strong> are
+    the current line. <strong>L</strong> is the mean squared residual in units of
+    y²; its square root is roughly the size of a typical miss in units of y. In the
+    equation rows, the bold figure is the result; everything before it is this
+    epoch's values substituted into the fixed formula. The update rows give the
+    parameters for the next epoch, so step forward once and they reappear as the new
+    <code>m</code> and <code>c</code>.</p>
+    <p>On the valley map, the red route is every <code>(m, c)</code> the descent has
+    visited, the dot is the current position, and the dark arrow is the direction of
+    <code>−∇L</code>, straight downhill. Its length is not to scale.</p>
+
+    <h2>The controls</h2>
+    <p><strong>Play</strong> runs the descent, one epoch at a time for the first
+    twenty and then faster. <strong>+1 epoch</strong> advances exactly one update, the
+    best way to follow a single cycle through all five rows. <strong>Reset</strong>
+    returns to epoch zero. The slider jumps to any epoch. None of these change the
+    outcome: the whole run is computed once when the page loads, and the controls
+    only choose which moment of it to show.</p>
+
+    <h2>What is idealised</h2>
+    <p>The five points are invented, chosen so the starting line (flat, at
+    <code>c = 1.25</code>) has a loss near 0.59 and the run behaves like a typical
+    small notebook exercise. The learning rate is fixed at 0.01, and every update
+    uses all the data (full-batch descent); real training usually samples a subset
+    per step and often adapts the step size. After 500 epochs the route has not quite
+    reached the cross. That is the honest result at this learning rate, not a bug:
+    the valley is long and shallow along its floor, so progress there is slow. A
+    larger <code>η</code> would get there sooner, and a much larger one would
+    overshoot and diverge. Finally, this valley is a perfect bowl with a single
+    bottom. That is special to straight-line least squares; the loss surfaces of
+    neural networks have many valleys, and descent finds one of them.</p>
+  </div>
+
+  <p class="note">Notes · Machine learning — gradient descent from first principles.</p>
+</main>
+
+<script src="https://cdn.jsdelivr.net/gh/nihilisticiconoclast/cuddly-lamp@main/assets/tunnel-figure.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script>
+(function(){
+  /* the house logo and the per-page doodle */
+  if (window.TunnelFigure) {
+    document.getElementById('sig').innerHTML = TunnelFigure.tunnelFigureSVG(null, { variant: 'mark' });
+    var seed = document.body.dataset.seed || location.pathname || document.title;
+    var dd = document.getElementById('doodle');
+    dd.innerHTML = TunnelFigure.tunnelFigureSVG(seed, { variant: 'doodle' });
+    TunnelFigure.placeDoodle(dd);
+  }
+
+  /* ── the run: computed once, the controls only choose what to show ───── */
+  var X = [0.5, 1.5, 2.5, 3.5, 4.5], Y = [0.00, 0.35, 0.95, 1.30, 1.95];
+  var n = X.length, ETA = 0.01, N = 500, M_START = 0, C_START = 1.25;
+  var H = [], m = M_START, c = C_START;
+  for (var e = 0; e <= N; e++) {
+    var yh = X.map(function(x){ return m*x + c; });
+    var r = Y.map(function(y,i){ return y - yh[i]; });
+    var L = r.reduce(function(a,v){ return a + v*v; }, 0) / n;
+    var gm = -2/n * r.reduce(function(a,v,i){ return a + X[i]*v; }, 0);
+    var gc = -2/n * r.reduce(function(a,v){ return a + v; }, 0);
+    H.push({ m:m, c:c, yh:yh, r:r, L:L, gm:gm, gc:gc });
+    m -= ETA*gm; c -= ETA*gc;
+  }
+  /* the exact least-squares answer, for the cross on the map */
+  var mx = X.reduce(function(a,v){return a+v;},0)/n, my = Y.reduce(function(a,v){return a+v;},0)/n;
+  var sxy = 0, sxx = 0; for (var i=0;i<n;i++){ sxy += (X[i]-mx)*(Y[i]-my); sxx += (X[i]-mx)*(X[i]-mx); }
+  var BM = sxy/sxx, BC = my - BM*mx;
+
+  function lossAt(mm, cc){ var t=0; for (var i=0;i<n;i++){ var d=Y[i]-(mm*X[i]+cc); t+=d*d; } return t/n; }
+
+  /* colours come from tokens.css; canvas cannot read CSS variables directly */
+  var cs = getComputedStyle(document.documentElement);
+  function tok(name, fb){ var v = cs.getPropertyValue(name).trim(); return v || fb; }
+  var P = { paper:tok('--paper','#EDE7D3'), ink:tok('--ink','#4A3823'), contour:tok('--contour','#7A5C3E'),
+            index:tok('--index','#5A4225'), teal:tok('--incident','#3E7C8C'), amber:tok('--amber','#E0922B'), route:tok('--route','#C0432B') };
+  var DATA = '500 11px "IBM Plex Mono", ui-monospace, monospace';
+
+  function prep(cv){
+    var d = window.devicePixelRatio || 1, W = cv.clientWidth, Hh = cv.clientHeight;
+    cv.width = Math.round(W*d); cv.height = Math.round(Hh*d);
+    var x = cv.getContext('2d'); x.setTransform(d,0,0,d,0,0); x.clearRect(0,0,W,Hh); x.font = DATA;
+    return { x:x, W:W, H:Hh };
+  }
+
+  /* ── left: the line in data space ──────────────────────────────────── */
+  function drawLine(ep){
+    var g = prep(document.getElementById('cv-line')), x = g.x, W = g.W, Hh = g.H;
+    var Lp=40, Rp=12, Tp=12, Bp=28, x0=0, x1=5, y0=-0.6, y1=2.3;
+    function px(v){ return Lp + (v-x0)/(x1-x0)*(W-Lp-Rp); }
+    function py(v){ return Tp + (y1-v)/(y1-y0)*(Hh-Tp-Bp); }
+    x.lineWidth = 1; x.fillStyle = P.contour;
+    for (var v=-0.5; v<=2.01; v+=0.5){
+      x.strokeStyle = v===0 ? P.index : 'rgba(122,92,62,.22)';
+      x.beginPath(); x.moveTo(Lp,py(v)); x.lineTo(W-Rp,py(v)); x.stroke();
+      x.textAlign='right'; x.fillText(v.toFixed(1), Lp-6, py(v)+4);
+    }
+    for (var u=0; u<=5; u++){ x.textAlign='center'; x.fillText(u, px(u), Hh-9); }
+    var s = H[ep];
+    x.save(); x.beginPath(); x.rect(Lp,Tp,W-Lp-Rp,Hh-Tp-Bp); x.clip();
+    x.setLineDash([3,3]); x.strokeStyle = P.contour; x.lineWidth = 1;
+    for (var i=0;i<n;i++){ x.beginPath(); x.moveTo(px(X[i]),py(Y[i])); x.lineTo(px(X[i]),py(s.yh[i])); x.stroke(); }
+    x.setLineDash([]); x.strokeStyle = P.teal; x.lineWidth = 2.5; x.lineCap='round';
+    x.beginPath(); x.moveTo(px(x0),py(s.m*x0+s.c)); x.lineTo(px(x1),py(s.m*x1+s.c)); x.stroke();
+    for (var k=0;k<n;k++){
+      x.beginPath(); x.arc(px(X[k]),py(Y[k]),5,0,7); x.fillStyle = P.paper; x.fill();
+      x.lineWidth = 2; x.strokeStyle = P.ink; x.stroke();
+    }
+    x.restore();
+  }
+
+  /* ── right: the valley in parameter space, as a contour map ────────── */
+  var M0=-0.15, M1=0.75, C0=-0.6, C1=1.5, G=90, grid=null;
+  var LEVELS = [];                       /* contour levels, evenly spaced in log L */
+  (function(){ var a=Math.log(0.004), b=Math.log(4.0); for (var k=0;k<=16;k++) LEVELS.push(Math.exp(a+(b-a)*k/16)); })();
+
+  function buildGrid(){
+    grid = [];
+    for (var j=0;j<=G;j++){ var row=[]; for (var i=0;i<=G;i++){
+      row.push(lossAt(M0+(M1-M0)*i/G, C1-(C1-C0)*j/G)); } grid.push(row); }
+  }
+
+  function drawValley(ep){
+    var g = prep(document.getElementById('cv-valley')), x = g.x, W = g.W, Hh = g.H;
+    var Lp=44, Rp=12, Tp=12, Bp=28, pw=W-Lp-Rp, ph=Hh-Tp-Bp;
+    function px(v){ return Lp + (v-M0)/(M1-M0)*pw; }
+    function py(v){ return Tp + (C1-v)/(C1-C0)*ph; }
+    if (!grid) buildGrid();
+    var cw = pw/G, ch = ph/G;
+    x.save(); x.beginPath(); x.rect(Lp,Tp,pw,ph); x.clip();
+
+    /* high ground in amber: only where the loss genuinely runs high */
+    var lo = Math.log(0.25), hi = Math.log(3.0);
+    for (var j=0;j<G;j++) for (var i=0;i<G;i++){
+      var Lc = (grid[j][i]+grid[j][i+1]+grid[j+1][i]+grid[j+1][i+1])/4;
+      var t = (Math.log(Lc)-lo)/(hi-lo); if (t<=0) continue; if (t>1) t=1;
+      var a = 0.42*t, pc = [237,231,211], ac = [224,146,43];
+      x.fillStyle = 'rgb(' + [0,1,2].map(function(k){ return Math.round(pc[k]+(ac[k]-pc[k])*a); }).join(',') + ')';
+      x.fillRect(Lp+i*cw, Tp+j*ch, cw+0.6, ch+0.6);
+    }
+
+    /* isolines by marching squares; every fourth is an index contour */
+    for (var li=0; li<LEVELS.length; li++){
+      var lv = LEVELS[li], idx = (li % 4 === 0);
+      x.strokeStyle = idx ? P.index : P.contour; x.lineWidth = idx ? 1.2 : 0.7;
+      x.globalAlpha = idx ? 0.9 : 0.55;
+      x.beginPath();
+      for (var jj=0;jj<G;jj++) for (var ii=0;ii<G;ii++){
+        var a=grid[jj][ii], b=grid[jj][ii+1], cc=grid[jj+1][ii+1], d=grid[jj+1][ii];
+        var pts = [];
+        function edge(v1,v2,x1,y1,x2,y2){ if ((v1<lv)!==(v2<lv)){ var f=(lv-v1)/(v2-v1); pts.push([x1+(x2-x1)*f, y1+(y2-y1)*f]); } }
+        var X0=Lp+ii*cw, Y0=Tp+jj*ch, X1=X0+cw, Y1=Y0+ch;
+        edge(a,b,X0,Y0,X1,Y0); edge(b,cc,X1,Y0,X1,Y1); edge(cc,d,X1,Y1,X0,Y1); edge(d,a,X0,Y1,X0,Y0);
+        if (pts.length>=2){ x.moveTo(pts[0][0],pts[0][1]); x.lineTo(pts[1][0],pts[1][1]); }
+        if (pts.length===4){ x.moveTo(pts[2][0],pts[2][1]); x.lineTo(pts[3][0],pts[3][1]); }
+      }
+      x.stroke();
+    }
+    x.globalAlpha = 1;
+
+    /* the exact minimum */
+    var bx=px(BM), by=py(BC);
+    x.strokeStyle = P.ink; x.lineWidth = 1.6;
+    x.beginPath(); x.moveTo(bx-5,by-5); x.lineTo(bx+5,by+5); x.moveTo(bx+5,by-5); x.lineTo(bx-5,by+5); x.stroke();
+    x.fillStyle = P.ink; x.font = DATA; x.textAlign='left'; x.fillText('min', bx+8, by+4);
+
+    /* the route — the page's one red line */
+    x.strokeStyle = P.route; x.lineWidth = 2.2; x.lineCap='round'; x.lineJoin='round';
+    x.beginPath();
+    for (var k=0;k<=ep;k++){ var q=H[k]; if (k) x.lineTo(px(q.m),py(q.c)); else x.moveTo(px(q.m),py(q.c)); }
+    x.stroke();
+
+    /* −∇L: direction only, length not to scale */
+    var s = H[ep], vx = -s.gm*pw/(M1-M0), vy = s.gc*ph/(C1-C0), vl = Math.hypot(vx,vy);
+    var sx = px(s.m), sy = py(s.c);
+    if (vl > 1e-9){
+      var len = Math.max(14, Math.min(46, 10 + vl*0.06)), ux=vx/vl, uy=vy/vl, ex=sx+ux*len, ey=sy+uy*len;
+      x.strokeStyle = P.ink; x.fillStyle = P.ink; x.lineWidth = 1.5;
+      x.beginPath(); x.moveTo(sx,sy); x.lineTo(ex,ey); x.stroke();
+      x.beginPath(); x.moveTo(ex,ey); x.lineTo(ex-ux*8-uy*4.5, ey-uy*8+ux*4.5); x.lineTo(ex-ux*8+uy*4.5, ey-uy*8-ux*4.5); x.closePath(); x.fill();
+      x.textAlign='left'; x.fillText('−∇L', ex + (ux>=0?6:-30), ey + (uy>=0?12:-4));
+    }
+    x.beginPath(); x.arc(sx,sy,6,0,7); x.fillStyle=P.paper; x.fill();
+    x.beginPath(); x.arc(sx,sy,4.2,0,7); x.fillStyle=P.route; x.fill();
+    x.restore();
+
+    x.fillStyle = P.contour; x.font = DATA;
+    for (var mv=0; mv<=0.61; mv+=0.2){ x.textAlign='center'; x.fillText(mv.toFixed(1), px(mv), Hh-9); }
+    x.textAlign='right';
+    for (var cv=-0.5; cv<=1.51; cv+=0.5){ x.fillText(cv.toFixed(1), Lp-6, py(cv)+4); }
+  }
+
+  /* ── the equations, with this epoch's numbers in them ─────────────── */
+  function f(v,d){ d = d===undefined?3:d; var s = Math.abs(v) < 0.5*Math.pow(10,-d) ? 0 : v; return s.toFixed(d); }
+  function p(v,d){ return v < 0 ? '(' + f(v,d) + ')' : f(v,d); }
+  function K(id, tex){
+    var el = document.getElementById(id);
+    if (window.katex) katex.render(tex, el, { displayMode:true, throwOnError:false });
+    else el.textContent = tex;
+  }
+
+  function drawEqs(ep){
+    var s = H[ep];
+    K('e1', '\\hat{y} = m\\,x + c \\;=\\; ' + f(s.m) + '\\,x ' + (s.c<0?'-':'+') + ' ' + f(Math.abs(s.c)));
+    document.getElementById('tb').innerHTML = X.map(function(xv,i){
+      return '<tr><td>'+(i+1)+'</td><td>'+xv.toFixed(1)+'</td><td>'+Y[i].toFixed(2)+'</td><td>'+f(s.yh[i])+'</td><td>'+f(s.r[i])+'</td><td>'+f(s.r[i]*s.r[i])+'</td></tr>';
+    }).join('');
+    K('e3', 'L = \\frac{1}{n}\\sum_{i=1}^{n}(y_i-\\hat{y}_i)^2 = \\tfrac{1}{5}\\big(' +
+      s.r.map(function(v){ return f(v*v); }).join(' + ') + '\\big) = \\mathbf{' + f(s.L,4) + '}');
+    K('e4', '\\frac{\\partial L}{\\partial m} = -\\frac{2}{n}\\sum_{i=1}^{n} x_i\\,(y_i-\\hat{y}_i) = -\\tfrac{2}{5}\\big(' +
+      s.r.map(function(v,i){ return X[i].toFixed(1) + '\\times' + p(v,2); }).join(' + ') + '\\big) = \\mathbf{' + f(s.gm) + '}');
+    K('e5', '\\frac{\\partial L}{\\partial c} = -\\frac{2}{n}\\sum_{i=1}^{n} (y_i-\\hat{y}_i) = -\\tfrac{2}{5}\\big(' +
+      s.r.map(function(v){ return p(v,2); }).join(' + ') + '\\big) = \\mathbf{' + f(s.gc) + '}');
+    K('e6', 'm_{\\text{new}} = m - \\eta\\,\\frac{\\partial L}{\\partial m} = ' + f(s.m) + ' - 0.01 \\times ' + p(s.gm) + ' = \\mathbf{' + f(s.m-ETA*s.gm,4) + '}');
+    K('e7', 'c_{\\text{new}} = c - \\eta\\,\\frac{\\partial L}{\\partial c} = ' + f(s.c) + ' - 0.01 \\times ' + p(s.gc) + ' = \\mathbf{' + f(s.c-ETA*s.gc,4) + '}');
+  }
+
+  function drawProse(){
+    K('d1', 'L(m,c) = \\frac{1}{n}\\sum_{i=1}^{n}\\big(y_i - m\\,x_i - c\\big)^2');
+    K('d2', '\\frac{\\partial L}{\\partial m} = \\frac{1}{n}\\sum_{i=1}^{n} 2\\big(y_i - m\\,x_i - c\\big)\\cdot(-x_i) = -\\frac{2}{n}\\sum_{i=1}^{n} x_i\\,(y_i-\\hat{y}_i)');
+    K('d3', '\\frac{\\partial L}{\\partial c} = -\\frac{2}{n}\\sum_{i=1}^{n} (y_i-\\hat{y}_i)');
+    K('d4', 'm \\leftarrow m - \\eta\\,\\frac{\\partial L}{\\partial m}, \\qquad c \\leftarrow c - \\eta\\,\\frac{\\partial L}{\\partial c}');
+  }
+
+  /* ── controls ──────────────────────────────────────────────────────── */
+  var sl = document.getElementById('ep'), pb = document.getElementById('play'), timer = null;
+  function show(ep){
+    document.getElementById('r-ep').textContent = ep;
+    document.getElementById('r-m').textContent = f(H[ep].m);
+    document.getElementById('r-c').textContent = f(H[ep].c);
+    document.getElementById('r-l').textContent = f(H[ep].L, 4);
+    drawLine(ep); drawValley(ep); drawEqs(ep);
+  }
+  function stop(){ if (timer){ clearInterval(timer); timer = null; } pb.textContent = 'Play'; }
+  pb.addEventListener('click', function(){
+    if (timer){ stop(); return; }
+    if (+sl.value >= N) sl.value = 0;
+    pb.textContent = 'Pause';
+    timer = setInterval(function(){
+      var v = +sl.value, nx = v + (v < 20 ? 1 : 3);
+      if (nx >= N){ nx = N; stop(); }
+      sl.value = nx; show(nx);
+    }, 70);
+  });
+  document.getElementById('step').addEventListener('click', function(){ stop(); var v = Math.min(N, +sl.value+1); sl.value = v; show(v); });
+  document.getElementById('reset').addEventListener('click', function(){ stop(); sl.value = 0; show(0); });
+  sl.addEventListener('input', function(){ stop(); show(+sl.value); });
+  var rz; window.addEventListener('resize', function(){ clearTimeout(rz); rz = setTimeout(function(){ show(+sl.value); }, 80); });
+
+  function boot(){ drawProse(); show(0); }
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(boot); else boot();
+})();
+</script>
+</body>
+</html>
